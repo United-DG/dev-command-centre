@@ -2,11 +2,8 @@ FROM node:22-alpine
 
 WORKDIR /app
 
-# better-sqlite3 needs a compiler at install time
-RUN apk add --no-cache python3 make g++
-
-COPY package.json ./
-RUN npm install --omit=dev
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
 
 COPY . .
 

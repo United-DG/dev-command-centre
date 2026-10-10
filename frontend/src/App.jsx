@@ -93,10 +93,10 @@ export default function App() {
     <div className="min-h-screen bg-void p-4 md:p-8 max-w-6xl mx-auto">
       <header className="flex items-center justify-between mb-2">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold neon-text">COMMAND // CENTER</h1>
+          <h1 className="text-2xl md:text-3xl font-bold neon-text">COMMAND // CENTER <span className="text-lg text-gray-400">: V-{health?.version || '…'}</span></h1>
           <p className="text-xs text-gray-500 mt-1 tracking-wider">
             MULTI-PROJECT FOCUS ENGINE &amp; DAEMON BRIDGE
-            {health && <span className="text-mint ml-2">● backend online</span>}
+            {health && <span className="text-mint ml-2">● backend online{health.version ? ` v${health.version}` : ''}</span>}
           </p>
         </div>
         <button onClick={refresh} className="flex items-center gap-2 text-gray-400 hover:text-neon text-sm">
@@ -156,10 +156,16 @@ function GithubPanel({ repos, refresh }) {
   const [name, setName] = useState('');
   const [checking, setChecking] = useState(false);
   const [checkingId, setCheckingId] = useState(null);
+  const [note, setNote] = useState('');
 
   const add = async () => {
     if (!owner.trim() || !name.trim()) return;
-    const res = await api.post('/repos', { owner, name });
+    let res;
+    try {
+      res = await api.post('/repos', { owner, name });
+    } catch (e) {
+      return alert('add failed: backend unreachable or outdated (need v4.1+)');
+    }
     if (res.error) return alert(res.error);
     setOwner(''); setName('');
     refresh();
@@ -167,16 +173,33 @@ function GithubPanel({ repos, refresh }) {
 
   const checkNow = async () => {
     setChecking(true);
-    await api.post('/repos/check-now');
+    let res;
+    try {
+      res = await api.post('/repos/check-now');
+    } catch (e) {
+      res = null;
+    }
     setChecking(false);
+    if (!res) setNote('check failed: backend unreachable or outdated (need v4.1+)');
+    else if (res.failing && res.failing.length > 0) setNote(`checked ${res.checked} — failing: ${res.failing.map((r) => `${r.owner}/${r.name} [${r.status}]`).join(', ')}`);
+    else setNote(`checked ${res.checked || 0} repo(s) — all reachable`);
+    setTimeout(() => setNote(''), 8000);
     refresh();
   };
 
   const checkOne = async (id) => {
     setCheckingId(id);
-    const res = await api.post(`/repos/${id}/check`);
+    let res;
+    try {
+      res = await api.post(`/repos/${id}/check`);
+    } catch (e) {
+      res = null;
+    }
     setCheckingId(null);
-    if (res && res.success === false) alert(res.error || 'check failed');
+    if (!res) setNote('check failed: backend unreachable or outdated (need v4.1+)');
+    else if (res.success === false) setNote(res.error || 'check failed');
+    else setNote(res.message || 'checked');
+    setTimeout(() => setNote(''), 8000);
     refresh();
   };
 
@@ -201,6 +224,7 @@ function GithubPanel({ repos, refresh }) {
             <RefreshCw size={14} className={checking ? 'animate-spin' : ''} />
             {checking ? 'checking…' : 'check all commits now'}
           </button>
+          {note && <p className="text-xs text-gray-400">{note}</p>}
         </div>
       </Card>
       <Card title={`Watching (${repos.length})`} icon={<GitBranch size={16} className="text-violet2" />}>

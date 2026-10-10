@@ -15,6 +15,18 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+const APP_VERSION = '5.0.0';
+const BOOT_TIME = new Date().toISOString();
+
+// Crash diagnostics: leave the cause in `docker compose logs` instead of dying silently
+process.on('unhandledRejection', (reason) => {
+  console.error('[fatal] unhandled rejection:', reason && reason.stack ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[fatal] uncaught exception:', err && err.stack ? err.stack : err);
+  process.exit(1);
+});
+
 // ---------- helpers ----------
 function getSetting(key) {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
@@ -49,7 +61,7 @@ function taskWithLinks(row) {
 
 // ---------- health ----------
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, time: new Date().toISOString() });
+  res.json({ ok: true, version: APP_VERSION, uptime: Math.floor(process.uptime()), boot: BOOT_TIME, time: new Date().toISOString() });
 });
 
 // ---------- tasks ----------
@@ -236,7 +248,11 @@ app.post('/api/repos/:id/check', async (req, res) => {
   try {
     const result = await checkRepoCommits(repo);
     const fresh = db.prepare('SELECT * FROM repos WHERE id = ?').get(req.params.id);
-    res.json({ success: true, newCommits: result.newCommits, repo: fresh });
+    const summary = result.newCommits > 0
+      ? `${result.newCommits} new commit(s) — Telegram alert sent`
+      : 'up to date, no new commits';
+    logEvent('github', `Manual check: ${repo.owner}/${repo.name} — ${summary}`);
+    res.json({ success: true, newCommits: result.newCommits, message: summary, repo: fresh });
   } catch (err) {
     const code = err.response ? err.response.status : 'network';
     db.prepare('UPDATE repos SET status = ?, last_checked_at = ? WHERE id = ?').run(
@@ -244,14 +260,24 @@ app.post('/api/repos/:id/check', async (req, res) => {
       fmtDT(new Date()),
       req.params.id
     );
+    logEvent('github', `Manual check FAILED: ${repo.owner}/${repo.name} (${code}) — ${err.message}`);
     res.json({ success: false, error: `GitHub check failed (${code}): ${err.message}` });
   }
 });
 
 // global check-now (kept from v1)
 app.post('/api/repos/check-now', async (req, res) => {
+  const before = db.prepare('SELECT COUNT(*) n FROM events').get().n;
   await checkCommits();
-  res.json({ success: true });
+  const repos = db.prepare('SELECT owner, name, status FROM repos').all();
+  const bad = repos.filter((r) => r.status !== 'ok');
+  logEvent(
+    'github',
+    bad.length === 0
+      ? `Manual check-all: ${repos.length} repo(s) checked, all reachable`
+      : `Manual check-all: ${bad.length} repo(s) failing — ${bad.map((r) => `${r.owner}/${r.name} [${r.status}]`).join(', ')}`
+  );
+  res.json({ success: true, checked: repos.length, failing: bad });
 });
 
 // ---------- github connection test ----------
