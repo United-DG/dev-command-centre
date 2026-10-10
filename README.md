@@ -17,12 +17,21 @@ dev-command-center/
 ## What it does
 
 - **GitHub connectors** — add `owner/repo` pairs; the backend checks for new commits
-  every 15 minutes and fires a Telegram message per commit. Zero manual input.
+  every 15 minutes and fires a Telegram message per commit. Repos are validated
+  against the GitHub API (typos rejected), each card shows the latest commit's
+  date/time, and every repo has its own "check now" button.
 - **Project & plan checklists** — two boards on the dashboard, mark done with one
-  click, hourly Telegram reminder of everything still pending.
+  click. Each item can carry a **due date/time** and its own **reminder interval**
+  (e.g. every 30 min / 2 h); reminders pause during configurable **quiet hours**
+  (e.g. 22:00–07:00, server time). Plans can be **linked to a project or a repo** —
+  deleting the project/repo cascades to its plans.
+- **Telegram** — pings on task creation, per-commit alerts, repeating reminders,
+  and manual test triggers. Point the chat ID at a channel/group and the whole
+  team sees it (multi-user assignment is the planned next step).
 - **PC alarm** — a tiny Python daemon on your machine polls the server and plays a
-  real beep via `winsound` when an alarm is queued (or hourly reminders come in).
-- **SQLite persistence** — one file, no cloud, no accounts, survives restarts.
+  real beep via `winsound` when an alarm is queued (or reminders come in).
+- **SQLite persistence** — one file, no cloud, no accounts, survives restarts and
+  auto-migrates on upgrade.
 
 ## Deploy on your 24/7 server (Docker)
 
@@ -79,9 +88,11 @@ On WSL/Linux the daemon falls back to a terminal bell; on macOS it uses `afplay`
 3. Put both in `.env` (or in the dashboard: *Telegram & Daemon* tab → Save settings).
 4. Hit **Test Telegram ping** in the dashboard.
 
-Schedules: pending-task reminders **every hour on the hour**, commit checks
-**every 15 minutes**. To fire them manually: *Test Triggers → Send reminders now*
-and *GitHub Watcher → check commits now*.
+Schedules: per-task reminders on **your** interval (default 60 min, set per item or
+globally), commit checks **every 15 minutes**, quiet hours respected throughout
+(server local time). To fire things manually: *Test Triggers → Send reminders now*,
+*GitHub Watcher → check all / per-repo check*, *Test GitHub connection* verifies
+API reachability and shows your rate-limit quota.
 
 ## API reference
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   LayoutDashboard, GitBranch, CheckSquare, Settings as SettingsIcon,
   Plus, Trash2, Bell, Volume2, Send, RefreshCw, Terminal, CheckCircle2,
+  Clock, Link2, Wifi,
 } from 'lucide-react';
 
 const api = {
@@ -120,7 +121,7 @@ export default function App() {
           <Card title="Alarm Daemon" icon={<Volume2 size={16} className="text-mint" />} glow>
             <p className="text-sm text-gray-300 mt-2">PC daemon polls <span className="text-neon">/api/daemon/check-alarm</span> for a real hardware beep.</p>
             <button
-              onClick={() => api.post('/daemon/trigger-alarm').then(refresh)}
+              onClick={() => api.post('/daemon/trigger-alarm').then((r) => { if (!(r && r.success)) alert('trigger failed: ' + ((r && r.error) || 'check daemon token')); refresh(); })}
               className="mt-4 px-4 py-2 rounded-lg bg-neon text-black text-sm font-bold hover:opacity-90"
             >
               🚨 Ring my PC now
@@ -144,7 +145,7 @@ export default function App() {
       )}
 
       {tab === 'github' && <GithubPanel repos={repos} refresh={refresh} />}
-      {tab === 'tasks' && <TasksPanel tasks={tasks} refresh={refresh} />}
+      {tab === 'tasks' && <TasksPanel tasks={tasks} repos={repos} refresh={refresh} />}
       {tab === 'settings' && <SettingsPanel refresh={refresh} />}
     </div>
   );
@@ -154,6 +155,7 @@ function GithubPanel({ repos, refresh }) {
   const [owner, setOwner] = useState('');
   const [name, setName] = useState('');
   const [checking, setChecking] = useState(false);
+  const [checkingId, setCheckingId] = useState(null);
 
   const add = async () => {
     if (!owner.trim() || !name.trim()) return;
@@ -170,6 +172,23 @@ function GithubPanel({ repos, refresh }) {
     refresh();
   };
 
+  const checkOne = async (id) => {
+    setCheckingId(id);
+    const res = await api.post(`/repos/${id}/check`);
+    setCheckingId(null);
+    if (res && res.success === false) alert(res.error || 'check failed');
+    refresh();
+  };
+
+  const remove = async (r) => {
+    const msg = r.open_plans > 0
+      ? `Delete ${r.owner}/${r.name}? Its ${r.open_plans} linked plan(s) will be deleted too (cascade).`
+      : `Delete ${r.owner}/${r.name}?`;
+    if (!confirm(msg)) return;
+    await api.del(`/repos/${r.id}`);
+    refresh();
+  };
+
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <Card title="Add Repo Connector" icon={<Plus size={16} className="text-neon" />}>
@@ -177,24 +196,49 @@ function GithubPanel({ repos, refresh }) {
           <input placeholder="owner (e.g. United-DG)" value={owner} onChange={(e) => setOwner(e.target.value)} />
           <input placeholder="repo name (e.g. IMS)" value={name} onChange={(e) => setName(e.target.value)} />
           <button onClick={add} className="px-4 py-2 rounded-lg bg-neon text-black text-sm font-bold hover:opacity-90">+ Connect repo</button>
+          <p className="text-xs text-gray-500">Repos are validated against GitHub — non-existent repos are rejected.</p>
           <button onClick={checkNow} disabled={checking} className="flex items-center gap-2 text-sm text-gray-400 hover:text-neon">
             <RefreshCw size={14} className={checking ? 'animate-spin' : ''} />
-            {checking ? 'checking…' : 'check commits now'}
+            {checking ? 'checking…' : 'check all commits now'}
           </button>
         </div>
       </Card>
       <Card title={`Watching (${repos.length})`} icon={<GitBranch size={16} className="text-violet2" />}>
         {repos.length === 0 && <p className="text-sm text-gray-500">No repos yet — connect one above.</p>}
-        <ul className="space-y-2">
+        <ul className="space-y-3">
           {repos.map((r) => (
-            <li key={r.id} className="flex items-center justify-between text-sm border border-white/5 rounded-lg px-3 py-2">
-              <span className="text-gray-200">{r.owner}/{r.name}</span>
-              <span className="flex items-center gap-2">
-                <span className="text-xs text-gray-500">{r.last_commit_sha ? r.last_commit_sha.slice(0, 7) : 'no commits seen'}</span>
-                <button onClick={() => api.del(`/repos/${r.id}`).then(refresh)} className="text-gray-500 hover:text-red-400">
-                  <Trash2 size={14} />
-                </button>
-              </span>
+            <li key={r.id} className="border border-white/5 rounded-lg px-3 py-2">
+              <div className="flex items-center justify-between">
+                <span className="text-gray-200 text-sm font-bold">{r.owner}/{r.name}</span>
+                <span className="flex items-center gap-2">
+                  <button
+                    onClick={() => checkOne(r.id)}
+                    title="Check status now"
+                    className="flex items-center gap-1 text-xs text-gray-400 hover:text-neon border border-white/10 rounded px-2 py-1"
+                  >
+                    <RefreshCw size={12} className={checkingId === r.id ? 'animate-spin' : ''} />
+                    {checkingId === r.id ? 'checking…' : 'check'}
+                  </button>
+                  <button onClick={() => remove(r)} title="Delete repo (cascades to linked plans)" className="text-gray-500 hover:text-red-400">
+                    <Trash2 size={14} />
+                  </button>
+                </span>
+              </div>
+              <div className="mt-2 text-xs text-gray-400 space-y-1">
+                {r.last_commit_sha ? (
+                  <>
+                    <p><span className="text-neon">{r.last_commit_sha.slice(0, 7)}</span> — {r.last_commit_msg}</p>
+                    <p className="flex items-center gap-1"><Clock size={11} /> {r.last_commit_at}</p>
+                  </>
+                ) : (
+                  <p className="text-gray-600">no commits seen yet</p>
+                )}
+                <p className="text-gray-600">
+                  status: <span className={r.status && r.status !== 'ok' ? 'text-red-400' : 'text-mint'}>{r.status || 'ok'}</span>
+                  {r.last_checked_at && <span> · checked {r.last_checked_at}</span>}
+                  {r.open_plans > 0 && <span> · <span className="text-violet2">{r.open_plans} linked plan{r.open_plans > 1 ? 's' : ''}</span></span>}
+                </p>
+              </div>
             </li>
           ))}
         </ul>
@@ -203,31 +247,76 @@ function GithubPanel({ repos, refresh }) {
   );
 }
 
-function TasksPanel({ tasks, refresh }) {
+function TaskRow({ t, onToggle, onDelete }) {
+  return (
+    <li className={`text-sm rounded-lg px-3 py-2 border ${t.completed ? 'border-mint/30 opacity-60' : 'border-white/5'}`}>
+      <div className="flex items-center gap-3">
+        <button onClick={() => onToggle(t)} className={t.completed ? 'text-mint' : 'text-gray-500 hover:text-neon'}>
+          <CheckCircle2 size={16} />
+        </button>
+        <span className={`flex-1 ${t.completed ? 'line-through text-gray-500' : 'text-gray-200'}`}>{t.title}</span>
+        <button onClick={() => onDelete(t)} className="text-gray-600 hover:text-red-400"><Trash2 size={14} /></button>
+      </div>
+      <div className="ml-7 mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500">
+        {t.due_at && <span className="flex items-center gap-1"><Clock size={11} /> due {t.due_at}</span>}
+        {t.reminder_minutes && <span className="flex items-center gap-1"><Bell size={11} /> every {t.reminder_minutes >= 60 ? `${t.reminder_minutes / 60}h` : `${t.reminder_minutes}m`}</span>}
+        {!t.completed && t.next_reminder_at && <span className="text-gray-600">next ping {t.next_reminder_at}</span>}
+        {t.project_title && <span className="flex items-center gap-1 text-violet2"><Link2 size={11} /> {t.project_title}</span>}
+        {t.repo_owner && <span className="flex items-center gap-1 text-neon"><GitBranch size={11} /> {t.repo_owner}/{t.repo_name}</span>}
+      </div>
+    </li>
+  );
+}
+
+function TasksPanel({ tasks, repos, refresh }) {
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('project');
+  const [dueAt, setDueAt] = useState('');
+  const [remValue, setRemValue] = useState('');
+  const [remUnit, setRemUnit] = useState('minutes');
+  const [linkProject, setLinkProject] = useState('');
+  const [linkRepo, setLinkRepo] = useState('');
+
+  const projects = tasks.filter((t) => t.category === 'project');
 
   const add = async () => {
     if (!title.trim()) return;
-    await api.post('/tasks', { title, category });
-    setTitle('');
+    let reminder_minutes = null;
+    if (remValue) {
+      const v = parseFloat(remValue);
+      if (v > 0) reminder_minutes = Math.round(remUnit === 'hours' ? v * 60 : v);
+    }
+    const body = {
+      title,
+      category,
+      due_at: dueAt ? dueAt.replace('T', ' ') + ':00' : null,
+      reminder_minutes,
+    };
+    if (category === 'plan') {
+      if (linkProject) body.project_id = +linkProject;
+      if (linkRepo) body.repo_id = +linkRepo;
+    }
+    const res = await api.post('/tasks', body);
+    if (res.error) return alert(res.error);
+    setTitle(''); setDueAt(''); setRemValue(''); setLinkProject(''); setLinkRepo('');
     refresh();
   };
 
   const toggle = (t) => api.patch(`/tasks/${t.id}`, { completed: !t.completed }).then(refresh);
-  const remove = (t) => api.del(`/tasks/${t.id}`).then(refresh);
+  const remove = (t) => {
+    const linked = tasks.filter((x) => x.project_id === t.id).length;
+    const msg = t.category === 'project' && linked > 0
+      ? `Delete "${t.title}"? Its ${linked} linked plan(s) will be deleted too (cascade).`
+      : `Delete "${t.title}"?`;
+    if (!confirm(msg)) return;
+    api.del(`/tasks/${t.id}`).then(refresh);
+  };
 
   const list = (cat, label) => (
     <Card title={label} icon={<CheckSquare size={16} className="text-neon" />}>
       <ul className="space-y-2">
         {tasks.filter((t) => t.category === cat).map((t) => (
-          <li key={t.id} className={`flex items-center gap-3 text-sm rounded-lg px-3 py-2 border ${t.completed ? 'border-mint/30 opacity-60' : 'border-white/5'}`}>
-            <button onClick={() => toggle(t)} className={t.completed ? 'text-mint' : 'text-gray-500 hover:text-neon'}>
-              <CheckCircle2 size={16} />
-            </button>
-            <span className={`flex-1 ${t.completed ? 'line-through text-gray-500' : 'text-gray-200'}`}>{t.title}</span>
-            <button onClick={() => remove(t)} className="text-gray-600 hover:text-red-400"><Trash2 size={14} /></button>
-          </li>
+          <TaskRow key={t.id} t={t} onToggle={toggle} onDelete={remove} />
         ))}
         {tasks.filter((t) => t.category === cat).length === 0 && (
           <p className="text-sm text-gray-500">Nothing here yet.</p>
@@ -239,14 +328,37 @@ function TasksPanel({ tasks, refresh }) {
   return (
     <div className="space-y-4">
       <Card title="Add Item" icon={<Plus size={16} className="text-neon" />}>
-        <div className="flex flex-col md:flex-row gap-3">
-          <input className="flex-1" placeholder="e.g. wire M-Pesa callback into billing" value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} />
+        <div className="grid md:grid-cols-2 gap-3">
+          <input className="md:col-span-2" placeholder="e.g. wire M-Pesa callback into billing" value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} />
           <select value={category} onChange={(e) => setCategory(e.target.value)}>
             <option value="project">project</option>
             <option value="plan">plan</option>
           </select>
-          <button onClick={add} className="px-4 py-2 rounded-lg bg-neon text-black text-sm font-bold hover:opacity-90">+ Add</button>
+          <input type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} title="Due date & time" />
+          <div className="flex gap-2">
+            <input type="number" min="1" placeholder="remind every…" value={remValue} onChange={(e) => setRemValue(e.target.value)} className="w-full" />
+            <select value={remUnit} onChange={(e) => setRemUnit(e.target.value)}>
+              <option value="minutes">minutes</option>
+              <option value="hours">hours</option>
+            </select>
+          </div>
+          {category === 'plan' && (
+            <>
+              <select value={linkProject} onChange={(e) => setLinkProject(e.target.value)}>
+                <option value="">link to project… (optional)</option>
+                {projects.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
+              </select>
+              <select value={linkRepo} onChange={(e) => setLinkRepo(e.target.value)}>
+                <option value="">link to repo… (optional)</option>
+                {repos.map((r) => <option key={r.id} value={r.id}>{r.owner}/{r.name}</option>)}
+              </select>
+            </>
+          )}
+          <div className={category === 'plan' ? 'md:col-span-2' : ''}>
+            <button onClick={add} className="px-4 py-2 rounded-lg bg-neon text-black text-sm font-bold hover:opacity-90">+ Add</button>
+          </div>
         </div>
+        <p className="text-xs text-gray-600 mt-3">Reminders repeat on your interval (default 1h in settings) and pause during quiet hours. A Telegram message is sent on creation.</p>
       </Card>
       <div className="grid md:grid-cols-2 gap-4">
         {list('project', 'Active Projects')}
@@ -257,7 +369,7 @@ function TasksPanel({ tasks, refresh }) {
 }
 
 function SettingsPanel({ refresh }) {
-  const [cfg, setCfg] = useState({ tg_bot_token: '', tg_chat_id: '', github_token: '' });
+  const [cfg, setCfg] = useState({ tg_bot_token: '', tg_chat_id: '', github_token: '', quiet_start: '', quiet_end: '', default_reminder_minutes: '' });
   const [status, setStatus] = useState('');
   const [testMsg, setTestMsg] = useState('');
   const [daemonToken, setDaemonToken] = useState(
@@ -270,6 +382,9 @@ function SettingsPanel({ refresh }) {
         tg_bot_token: s.tg_bot_token === '***set***' ? '' : (s.tg_bot_token || ''),
         tg_chat_id: s.tg_chat_id || '',
         github_token: s.github_token === '***set***' ? '' : (s.github_token || ''),
+        quiet_start: s.quiet_start ?? '',
+        quiet_end: s.quiet_end ?? '',
+        default_reminder_minutes: s.default_reminder_minutes ?? '',
       });
     }).catch(() => {});
   }, []);
@@ -279,6 +394,9 @@ function SettingsPanel({ refresh }) {
     if (cfg.tg_bot_token) body.tg_bot_token = cfg.tg_bot_token;
     if (cfg.tg_chat_id) body.tg_chat_id = cfg.tg_chat_id;
     if (cfg.github_token) body.github_token = cfg.github_token;
+    if (cfg.quiet_start !== '') body.quiet_start = cfg.quiet_start;
+    if (cfg.quiet_end !== '') body.quiet_end = cfg.quiet_end;
+    if (cfg.default_reminder_minutes !== '') body.default_reminder_minutes = cfg.default_reminder_minutes;
     const res = await api.put('/settings', body);
     setStatus(res.success ? 'saved ✓' : 'save failed');
     setTimeout(() => setStatus(''), 3000);
@@ -292,6 +410,13 @@ function SettingsPanel({ refresh }) {
     refresh();
   };
 
+  const testGithub = async () => {
+    const res = await api.post('/github/test');
+    setStatus(res.success ? `✓ ${res.message}` : `failed: ${res.error}`);
+    setTimeout(() => setStatus(''), 6000);
+    refresh();
+  };
+
   const ringPc = () => api.post('/daemon/trigger-alarm').then((r) => {
     setStatus(r && r.success ? 'alarm signal queued — daemon will beep within ~10s' : `trigger failed: ${(r && r.error) || 'check daemon token'}`);
     setTimeout(() => setStatus(''), 4000);
@@ -299,7 +424,8 @@ function SettingsPanel({ refresh }) {
   });
 
   const sendReminderNow = () => api.post('/reminders/send-now').then((r) => {
-    setStatus(r && (r.success !== false) ? 'reminder dispatch queued' : `failed: ${(r && r.error) || 'check daemon token'}`);
+    if (r && r.quiet) setStatus('in quiet hours — reminders deferred');
+    else setStatus(r && (r.success !== false) ? `reminder dispatch queued (${r.sent || 0} sent)` : `failed: ${(r && r.error) || 'check daemon token'}`);
     setTimeout(() => setStatus(''), 4000);
     refresh();
   });
@@ -315,9 +441,23 @@ function SettingsPanel({ refresh }) {
       <Card title="Telegram Bot" icon={<Send size={16} className="text-neon" />}>
         <div className="flex flex-col gap-3">
           <input type="password" placeholder="Bot token (from @BotFather)" value={cfg.tg_bot_token} onChange={(e) => setCfg({ ...cfg, tg_bot_token: e.target.value })} />
-          <input placeholder="Chat ID" value={cfg.tg_chat_id} onChange={(e) => setCfg({ ...cfg, tg_chat_id: e.target.value })} />
+          <input placeholder="Chat ID (or channel/group ID for team alerts)" value={cfg.tg_chat_id} onChange={(e) => setCfg({ ...cfg, tg_chat_id: e.target.value })} />
           <input type="password" placeholder="GitHub token (optional, raises API rate limit)" value={cfg.github_token} onChange={(e) => setCfg({ ...cfg, github_token: e.target.value })} />
           <button onClick={save} className="px-4 py-2 rounded-lg bg-neon text-black text-sm font-bold hover:opacity-90">Save settings</button>
+        </div>
+      </Card>
+      <Card title="Reminder Schedule" icon={<Clock size={16} className="text-violet2" />}>
+        <div className="flex flex-col gap-3">
+          <label className="text-xs text-gray-500">Default reminder interval (minutes)</label>
+          <input type="number" min="5" placeholder="60" value={cfg.default_reminder_minutes} onChange={(e) => setCfg({ ...cfg, default_reminder_minutes: e.target.value })} />
+          <label className="text-xs text-gray-500">Quiet hours — no reminders between (server time, 0–23)</label>
+          <div className="flex gap-2 items-center">
+            <input type="number" min="0" max="23" placeholder="22" value={cfg.quiet_start} onChange={(e) => setCfg({ ...cfg, quiet_start: e.target.value })} className="w-full" />
+            <span className="text-gray-500">→</span>
+            <input type="number" min="0" max="23" placeholder="7" value={cfg.quiet_end} onChange={(e) => setCfg({ ...cfg, quiet_end: e.target.value })} className="w-full" />
+          </div>
+          <p className="text-xs text-gray-600">Example 22 → 7 = silent 10pm–7am. Equal values disable quiet hours.</p>
+          <button onClick={save} className="px-4 py-2 rounded-lg bg-neon text-black text-sm font-bold hover:opacity-90">Save schedule</button>
         </div>
       </Card>
       <Card title="Test Triggers" icon={<Bell size={16} className="text-violet2" />}>
@@ -329,19 +469,18 @@ function SettingsPanel({ refresh }) {
             <button onClick={testPing} className="px-4 py-2 rounded-lg border border-neon text-neon text-sm hover:bg-neon/10">📲 Test Telegram ping</button>
             <button onClick={ringPc} className="px-4 py-2 rounded-lg border border-mint text-mint text-sm hover:bg-mint/10">🚨 Ring PC alarm</button>
             <button onClick={sendReminderNow} className="px-4 py-2 rounded-lg border border-violet2 text-violet2 text-sm hover:bg-violet2/10">🔔 Send reminders now</button>
+            <button onClick={testGithub} className="px-4 py-2 rounded-lg border border-neon text-neon text-sm hover:bg-neon/10 flex items-center gap-1"><Wifi size={14} /> Test GitHub connection</button>
           </div>
           {status && <p className="text-sm text-gray-400">{status}</p>}
         </div>
       </Card>
-      <div className="md:col-span-2">
-        <Card title="PC Daemon Setup" icon={<Volume2 size={16} className="text-mint" />}>
-          <p className="text-sm text-gray-400 leading-relaxed">
-            On your Windows machine, run the daemon in <span className="text-neon">pc-daemon/</span> — it polls the backend every 10s and plays a real
-            hardware beep whenever an alarm is queued. Point <span className="text-neon">SERVER_URL</span> at your 24/7 server, then run
-            <code className="text-gray-200"> python alarm_daemon.py</code>. Add it to Windows Task Scheduler to start on boot (see README).
-          </p>
-        </Card>
-      </div>
+      <Card title="PC Daemon Setup" icon={<Volume2 size={16} className="text-mint" />}>
+        <p className="text-sm text-gray-400 leading-relaxed">
+          On your Windows machine, run the daemon in <span className="text-neon">pc-daemon/</span> — it polls the backend every 10s and plays a real
+          hardware beep whenever an alarm is queued. Point <span className="text-neon">SERVER_URL</span> at your 24/7 server, then run
+          <code className="text-gray-200"> python alarm_daemon.py</code>. A <span className="text-neon">.env</span> file with <span className="text-neon">DCC_TOKEN</span> / <span className="text-neon">DCC_SERVER</span> next to the script is picked up automatically. Add it to Windows Task Scheduler to start on boot (see README).
+        </p>
+      </Card>
     </div>
   );
 }

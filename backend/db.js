@@ -7,13 +7,19 @@ if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 const db = new Database(path.join(dataDir, 'data.db'));
 db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 
+// ---------- base schema (fresh installs) ----------
 db.exec(`
   CREATE TABLE IF NOT EXISTS repos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     owner TEXT NOT NULL,
     name TEXT NOT NULL,
     last_commit_sha TEXT,
+    last_commit_msg TEXT,
+    last_commit_at DATETIME,
+    status TEXT DEFAULT 'ok',
+    last_checked_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(owner, name)
   );
@@ -23,6 +29,11 @@ db.exec(`
     category TEXT CHECK(category IN ('project', 'plan')) NOT NULL DEFAULT 'project',
     title TEXT NOT NULL,
     completed INTEGER NOT NULL DEFAULT 0,
+    due_at DATETIME,
+    reminder_minutes INTEGER,
+    next_reminder_at DATETIME,
+    project_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+    repo_id INTEGER REFERENCES repos(id) ON DELETE CASCADE,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -38,6 +49,29 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 `);
+
+// ---------- lightweight migrations for existing installs ----------
+function ensureColumn(table, column, ddl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+    console.log(`[db] migrated: ${table}.${column} added`);
+  }
+}
+
+ensureColumn('repos', 'last_commit_msg', 'TEXT');
+ensureColumn('repos', 'last_commit_at', 'DATETIME');
+ensureColumn('repos', 'status', "TEXT DEFAULT 'ok'");
+ensureColumn('repos', 'last_checked_at', 'DATETIME');
+ensureColumn('tasks', 'due_at', 'DATETIME');
+ensureColumn('tasks', 'reminder_minutes', 'INTEGER');
+ensureColumn('tasks', 'next_reminder_at', 'DATETIME');
+ensureColumn('tasks', 'project_id', 'INTEGER REFERENCES tasks(id) ON DELETE CASCADE');
+ensureColumn('tasks', 'repo_id', 'INTEGER REFERENCES repos(id) ON DELETE CASCADE');
+
+// NOTE: SQLite cannot add a FOREIGN KEY via ALTER TABLE ADD COLUMN with
+// enforcement on pre-existing tables in all cases, so cascade deletes are
+// ALSO enforced manually in the DELETE endpoints below (belt and suspenders).
 
 const MAX_EVENTS = 200;
 db.prepare(
