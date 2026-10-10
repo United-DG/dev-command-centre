@@ -5,11 +5,21 @@ import {
 } from 'lucide-react';
 
 const api = {
-  get: (p) => fetch(`/api${p}`).then((r) => { if (!r.ok) throw new Error(r.statusText); return r.json(); }),
-  post: (p, body) => fetch(`/api${p}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }).then((r) => r.json()),
-  put: (p, body) => fetch(`/api${p}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json()),
-  patch: (p, body) => fetch(`/api${p}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json()),
-  del: (p) => fetch(`/api${p}`, { method: 'DELETE' }).then((r) => r.json()),
+  _token: (typeof localStorage !== 'undefined' && localStorage.getItem('dcc_daemon_token')) || '',
+  setToken(t) {
+    this._token = t;
+    try { localStorage.setItem('dcc_daemon_token', t); } catch (e) { /* ignore */ }
+  },
+  headers() {
+    const h = { 'Content-Type': 'application/json' };
+    if (this._token) h['X-Daemon-Token'] = this._token;
+    return h;
+  },
+  get: (p) => fetch(`/api${p}`, { headers: api.headers() }).then((r) => { if (!r.ok) throw new Error(r.statusText); return r.json(); }),
+  post: (p, body) => fetch(`/api${p}`, { method: 'POST', headers: api.headers(), body: JSON.stringify(body || {}) }).then((r) => r.json()),
+  put: (p, body) => fetch(`/api${p}`, { method: 'PUT', headers: api.headers(), body: JSON.stringify(body) }).then((r) => r.json()),
+  patch: (p, body) => fetch(`/api${p}`, { method: 'PATCH', headers: api.headers(), body: JSON.stringify(body) }).then((r) => r.json()),
+  del: (p) => fetch(`/api${p}`, { method: 'DELETE', headers: api.headers() }).then((r) => r.json()),
 };
 
 function Card({ title, icon, children, glow }) {
@@ -250,6 +260,9 @@ function SettingsPanel({ refresh }) {
   const [cfg, setCfg] = useState({ tg_bot_token: '', tg_chat_id: '', github_token: '' });
   const [status, setStatus] = useState('');
   const [testMsg, setTestMsg] = useState('');
+  const [daemonToken, setDaemonToken] = useState(
+    (typeof localStorage !== 'undefined' && localStorage.getItem('dcc_daemon_token')) || ''
+  );
 
   useEffect(() => {
     api.get('/settings').then((s) => {
@@ -279,17 +292,23 @@ function SettingsPanel({ refresh }) {
     refresh();
   };
 
-  const ringPc = () => api.post('/daemon/trigger-alarm').then(() => {
-    setStatus('alarm signal queued — daemon will beep');
+  const ringPc = () => api.post('/daemon/trigger-alarm').then((r) => {
+    setStatus(r && r.success ? 'alarm signal queued — daemon will beep within ~10s' : `trigger failed: ${(r && r.error) || 'check daemon token'}`);
     setTimeout(() => setStatus(''), 4000);
     refresh();
   });
 
-  const sendReminderNow = () => api.post('/reminders/send-now').then(() => {
-    setStatus('reminder dispatch queued');
+  const sendReminderNow = () => api.post('/reminders/send-now').then((r) => {
+    setStatus(r && (r.success !== false) ? 'reminder dispatch queued' : `failed: ${(r && r.error) || 'check daemon token'}`);
     setTimeout(() => setStatus(''), 4000);
     refresh();
   });
+
+  const saveDaemonToken = () => {
+    api.setToken(daemonToken.trim());
+    setStatus('daemon token saved in this browser ✓');
+    setTimeout(() => setStatus(''), 3000);
+  };
 
   return (
     <div className="grid md:grid-cols-2 gap-4">
@@ -303,6 +322,8 @@ function SettingsPanel({ refresh }) {
       </Card>
       <Card title="Test Triggers" icon={<Bell size={16} className="text-violet2" />}>
         <div className="flex flex-col gap-3">
+          <input type="password" placeholder="Daemon token (must match server DAEMON_TOKEN)" value={daemonToken} onChange={(e) => setDaemonToken(e.target.value)} />
+          <button onClick={saveDaemonToken} className="px-4 py-2 rounded-lg bg-violet2 text-black text-sm font-bold hover:opacity-90">Save daemon token</button>
           <input placeholder="Custom test message (optional)" value={testMsg} onChange={(e) => setTestMsg(e.target.value)} />
           <div className="flex flex-wrap gap-2">
             <button onClick={testPing} className="px-4 py-2 rounded-lg border border-neon text-neon text-sm hover:bg-neon/10">📲 Test Telegram ping</button>
