@@ -1,0 +1,21 @@
+services:
+  backend:
+    build: ./backend
+    env_file: .env
+    ports:
+      - "${PORT:-5000}:5000"
+    volumes:
+      # SQLite database persists across restarts/rebuilds
+      - command-center-data:/app
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  command-center-data:
