@@ -78,6 +78,31 @@ db.prepare(
   `DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT ?)`
 ).run(MAX_EVENTS);
 
+// ---------- boot-time backup ----------
+// Cheap insurance for a 24/7 box that gets rebuilt often: snapshot data.db
+// on every boot, keep the newest 10. Restoring = copy a backup over data.db
+// while the backend is stopped.
+try {
+  const dbPath = path.join(dataDir, 'data.db');
+  if (fs.existsSync(dbPath)) {
+    try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch (e) { /* ignore */ }
+    const backupDir = path.join(dataDir, 'backups');
+    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const dest = path.join(backupDir, `data-${stamp}.db`);
+    fs.copyFileSync(dbPath, dest);
+    console.log(`[db] boot backup -> ${dest}`);
+    const files = fs.readdirSync(backupDir)
+      .filter((f) => f.startsWith('data-') && f.endsWith('.db'))
+      .sort();
+    while (files.length > 10) {
+      fs.unlinkSync(path.join(backupDir, files.shift()));
+    }
+  }
+} catch (e) {
+  console.error('[db] boot backup failed:', e.message);
+}
+
 function logEvent(type, message) {
   try {
     db.prepare('INSERT INTO events (type, message) VALUES (?, ?)').run(type, message);

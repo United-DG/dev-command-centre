@@ -15,7 +15,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const APP_VERSION = '5.0.0';
+const APP_VERSION = '5.1.0';
 const BOOT_TIME = new Date().toISOString();
 
 // Crash diagnostics: leave the cause in `docker compose logs` instead of dying silently
@@ -33,14 +33,31 @@ function getSetting(key) {
   return row ? row.value : null;
 }
 
-// Optional shared secret so random hosts can't ring the PC alarm or
-// poke the settings API. Leave DAEMON_TOKEN unset to skip auth.
+// ---------- auth ----------
+// API_KEY: when set, every /api route (except /health) requires it via
+// the `x-api-key` header or `?api_key=` query param. This is what lets a
+// remote client (e.g. your AI assistant) control the system securely.
+// DAEMON_TOKEN: legacy/alternative secret for the PC daemon; only valid
+// on the daemon poll endpoint.
+function apiAuth(req, res, next) {
+  const apiKey = process.env.API_KEY;
+  const daemonToken = process.env.DAEMON_TOKEN;
+  if (!apiKey && !daemonToken) return next();
+  const key = req.headers['x-api-key'] || req.query.api_key;
+  const tok = req.headers['x-daemon-token'] || req.query.token;
+  if (apiKey && key === apiKey) return next();
+  if (daemonToken && tok === daemonToken && req.path === '/daemon/check-alarm') return next();
+  return res.status(403).json({ error: 'forbidden' });
+}
+
+app.use('/api', (req, res, next) => {
+  if (req.path === '/health') return next();
+  return apiAuth(req, res, next);
+});
+
+// kept for backwards-compat in case anything references it
 function checkAuth(req, res, next) {
-  const want = process.env.DAEMON_TOKEN;
-  if (!want) return next();
-  const got = req.query.token || req.headers['x-daemon-token'];
-  if (got !== want) return res.status(403).json({ error: 'forbidden' });
-  next();
+  return apiAuth(req, res, next);
 }
 
 function ghHeaders() {
@@ -313,7 +330,7 @@ const SETTING_KEYS = [
   'default_reminder_minutes',
 ];
 
-app.get('/api/settings', checkAuth, (req, res) => {
+app.get('/api/settings', (req, res) => {
   const out = {};
   for (const k of SETTING_KEYS) {
     const v = getSetting(k);
@@ -322,7 +339,7 @@ app.get('/api/settings', checkAuth, (req, res) => {
   res.json(out);
 });
 
-app.put('/api/settings', checkAuth, (req, res) => {
+app.put('/api/settings', (req, res) => {
   const stmt = db.prepare(
     'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
   );
@@ -347,18 +364,18 @@ app.post('/api/telegram/test', async (req, res) => {
 // ---------- PC alarm daemon bridge ----------
 let alarmTriggered = false;
 
-app.get('/api/daemon/check-alarm', checkAuth, (req, res) => {
+app.get('/api/daemon/check-alarm', (req, res) => {
   res.json({ sound_alarm: alarmTriggered });
   alarmTriggered = false; // consume
 });
 
-app.post('/api/daemon/trigger-alarm', checkAuth, (req, res) => {
+app.post('/api/daemon/trigger-alarm', (req, res) => {
   alarmTriggered = true;
   logEvent('alarm', 'PC alarm triggered from dashboard');
   res.json({ success: true });
 });
 
-app.post('/api/reminders/send-now', checkAuth, async (req, res) => {
+app.post('/api/reminders/send-now', async (req, res) => {
   const r = await sendReminders();
   if (r.quiet) return res.json({ success: true, quiet: true, message: 'in quiet hours — deferred' });
   res.json({ success: true, sent: r.sent });

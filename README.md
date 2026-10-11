@@ -111,8 +111,42 @@ API reachability and shows your rate-limit quota.
 | POST | `/api/daemon/trigger-alarm` | ring the PC now |
 | POST | `/api/reminders/send-now` | fire the hourly reminder immediately |
 
-If `DAEMON_TOKEN` is set, mutating endpoints and settings require it via
-`?token=` or the `X-Daemon-Token` header.
+If `DAEMON_TOKEN` is set, the daemon poll endpoint also accepts the API key.
+`x-api-key` header (or `?api_key=` query param) works everywhere the API key does.
+
+## Remote API access (AI assistant control)
+
+Set `API_KEY` in `.env` (generate with `openssl rand -hex 32`), then expose the
+backend to the internet. Easiest options if the server has no public IP:
+
+```bash
+# Cloudflare quick tunnel (no account needed)
+cloudflared tunnel --url http://localhost:5000
+# or ngrok
+ngrok http 5000
+```
+
+Note the public URL it prints, e.g. `https://abc123.trycloudflare.com`. Hand that
+URL plus the `API_KEY` to your assistant. It can then:
+
+```bash
+BASE=https://<your-tunnel>/api
+H="x-api-key: <API_KEY>"
+
+curl -H "$H" $BASE/tasks                          # list projects & plans
+curl -H "$H" -X POST $BASE/tasks \                # add one
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Ship v2","category":"project","reminder_minutes":60}'
+curl -H "$H" -X PATCH $BASE/tasks/3 \             # mark done
+  -H 'Content-Type: application/json' -d '{"completed":true}'
+curl -H "$H" $BASE/repos                          # watched repos + last commits
+curl -H "$H" -X POST $BASE/daemon/trigger-alarm   # ring the PC
+curl -H "$H" -X POST $BASE/reminders/send-now      # fire reminders now
+```
+
+With the key set, the dashboard also needs it: open the dashboard once →
+*Telegram & Daemon* tab → paste the key → *Save API key*. It's stored in the
+browser's localStorage, one-time per browser.
 
 ## Future hooks
 

@@ -7,13 +7,19 @@ import {
 
 const api = {
   _token: (typeof localStorage !== 'undefined' && localStorage.getItem('dcc_daemon_token')) || '',
+  _apiKey: (typeof localStorage !== 'undefined' && localStorage.getItem('dcc_api_key')) || '',
   setToken(t) {
     this._token = t;
     try { localStorage.setItem('dcc_daemon_token', t); } catch (e) { /* ignore */ }
   },
+  setApiKey(k) {
+    this._apiKey = k;
+    try { localStorage.setItem('dcc_api_key', k); } catch (e) { /* ignore */ }
+  },
   headers() {
     const h = { 'Content-Type': 'application/json' };
     if (this._token) h['X-Daemon-Token'] = this._token;
+    if (this._apiKey) h['x-api-key'] = this._apiKey;
     return h;
   },
   get: (p) => fetch(`/api${p}`, { headers: api.headers() }).then((r) => { if (!r.ok) throw new Error(r.statusText); return r.json(); }),
@@ -399,6 +405,9 @@ function SettingsPanel({ refresh }) {
   const [daemonToken, setDaemonToken] = useState(
     (typeof localStorage !== 'undefined' && localStorage.getItem('dcc_daemon_token')) || ''
   );
+  const [apiKey, setApiKey] = useState(
+    (typeof localStorage !== 'undefined' && localStorage.getItem('dcc_api_key')) || ''
+  );
 
   useEffect(() => {
     api.get('/settings').then((s) => {
@@ -460,6 +469,12 @@ function SettingsPanel({ refresh }) {
     setTimeout(() => setStatus(''), 3000);
   };
 
+  const saveApiKey = () => {
+    api.setApiKey(apiKey.trim());
+    setStatus('API key saved in this browser ✓ — reloading…');
+    setTimeout(() => { setStatus(''); refresh(); }, 1200);
+  };
+
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <Card title="Telegram Bot" icon={<Send size={16} className="text-neon" />}>
@@ -488,6 +503,8 @@ function SettingsPanel({ refresh }) {
         <div className="flex flex-col gap-3">
           <input type="password" placeholder="Daemon token (must match server DAEMON_TOKEN)" value={daemonToken} onChange={(e) => setDaemonToken(e.target.value)} />
           <button onClick={saveDaemonToken} className="px-4 py-2 rounded-lg bg-violet2 text-black text-sm font-bold hover:opacity-90">Save daemon token</button>
+          <input type="password" placeholder="API key (must match server API_KEY — dashboard needs it too)" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+          <button onClick={saveApiKey} className="px-4 py-2 rounded-lg bg-neon text-black text-sm font-bold hover:opacity-90">Save API key</button>
           <input placeholder="Custom test message (optional)" value={testMsg} onChange={(e) => setTestMsg(e.target.value)} />
           <div className="flex flex-wrap gap-2">
             <button onClick={testPing} className="px-4 py-2 rounded-lg border border-neon text-neon text-sm hover:bg-neon/10">📲 Test Telegram ping</button>
